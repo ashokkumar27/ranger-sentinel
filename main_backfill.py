@@ -4,6 +4,7 @@ from collectors.kamino import fetch_borrow_and_staking_history
 from pipelines.normalize import canonicalize
 from storage.db import init_db, SessionLocal
 from storage.schemas import ProtocolSnapshot
+from sqlalchemy.dialects.sqlite import insert
 import pandas as pd
 import datetime as dt
 
@@ -36,6 +37,32 @@ def _prepare_rows(df: pd.DataFrame) -> pd.DataFrame:
     return x
 
 
+def write_rows(df: pd.DataFrame) -> int:
+    if df.empty:
+        return 0
+
+    cleaned = _prepare_rows(df)
+    if cleaned.empty:
+        return 0
+
+    rows = cleaned.to_dict(orient="records")
+    for row in rows:
+        if isinstance(row.get("ts"), pd.Timestamp):
+            row["ts"] = row["ts"].to_pydatetime()
+
+    session = SessionLocal()
+    try:
+        stmt = insert(ProtocolSnapshot).values(rows)
+        updatable_columns = {
+            c.name: getattr(stmt.excluded, c.name)
+            for c in ProtocolSnapshot.__table__.columns
+            if c.name not in PRIMARY_KEY_COLS
+        }
+        stmt = stmt.on_conflict_do_update(
+            index_elements=PRIMARY_KEY_COLS,
+            set_=updatable_columns,
+        )
+        session.execute(stmt)
 PRIMARY_KEY_COLS = ["ts", "protocol", "market", "asset"]
 
 
@@ -85,6 +112,8 @@ def write_rows(df: pd.DataFrame) -> int:
     finally:
         session.close()
 
+    return len(rows)
+
 
 def main():
     init_db()
@@ -118,6 +147,8 @@ def main():
     except Exception as e:
         print(f"[warn] kamino history fetch failed: {e}")
 
+    if written:
+        print(f"Wrote {written} rows")
     non_empty_frames = [f for f in frames if not f.empty and not f.dropna(how="all").empty]
 
     if non_empty_frames:
