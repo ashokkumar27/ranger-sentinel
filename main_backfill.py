@@ -36,7 +36,36 @@ def _prepare_rows(df: pd.DataFrame) -> pd.DataFrame:
     return x
 
 
-def write_rows(df: pd.DataFrame):
+PRIMARY_KEY_COLS = ["ts", "protocol", "market", "asset"]
+
+
+def _fill_missing_key_parts(x: pd.DataFrame) -> pd.DataFrame:
+    x = x.copy()
+    for i, row in x.iterrows():
+        raw = row.get("raw_json") if isinstance(row.get("raw_json"), dict) else {}
+
+        if pd.isna(row.get("market")) or row.get("market") in ("", None):
+            inferred_market = raw.get("symbol") or raw.get("market") or row.get("venue") or "unknown_market"
+            x.at[i, "market"] = f"{inferred_market}:{i}"
+
+        if pd.isna(row.get("asset")) or row.get("asset") in ("", None):
+            inferred_asset = raw.get("asset") or raw.get("token") or raw.get("reserve") or "unknown_asset"
+            x.at[i, "asset"] = inferred_asset
+
+    return x
+
+
+def _prepare_rows(df: pd.DataFrame) -> pd.DataFrame:
+    x = df.copy()
+    if "ts" in x.columns:
+        x["ts"] = pd.to_datetime(x["ts"], utc=True, errors="coerce")
+    x = x.dropna(subset=["ts", "protocol"])
+    x = _fill_missing_key_parts(x)
+    x = x.drop_duplicates(subset=PRIMARY_KEY_COLS, keep="last")
+    return x
+
+
+def write_rows(df: pd.DataFrame) -> int:
     if df.empty:
         return
 
@@ -59,33 +88,33 @@ def write_rows(df: pd.DataFrame):
 
 def main():
     init_db()
-    frames = []
+    written = 0
 
     try:
         drift_hist = fetch_funding_rates("SOL-PERP")
         if not drift_hist.empty:
-            frames.append(canonicalize(drift_hist, venue="drift"))
+            written += write_rows(canonicalize(drift_hist, venue="drift"))
     except Exception as e:
         print(f"[warn] drift funding backfill failed: {e}")
 
     try:
         drift_live = fetch_market_stats()
         if not drift_live.empty:
-            frames.append(canonicalize(drift_live, venue="drift"))
+            written += write_rows(canonicalize(drift_live, venue="drift"))
     except Exception as e:
         print(f"[warn] drift live fetch failed: {e}")
 
     try:
         jup = fetch_earn_tokens()
         if not jup.empty:
-            frames.append(canonicalize(jup, venue="jupiter_lend"))
+            written += write_rows(canonicalize(jup, venue="jupiter_lend"))
     except Exception as e:
         print(f"[warn] jupiter lend fetch failed: {e}")
 
     try:
         kamino = fetch_borrow_and_staking_history()
         if not kamino.empty:
-            frames.append(canonicalize(kamino, venue="kamino"))
+            written += write_rows(canonicalize(kamino, venue="kamino"))
     except Exception as e:
         print(f"[warn] kamino history fetch failed: {e}")
 
