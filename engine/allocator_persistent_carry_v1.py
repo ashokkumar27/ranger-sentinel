@@ -26,7 +26,6 @@ class AllocationConfig:
     funding_alpha_total_cap: float = 0.15
 
 
-
 def _normalize_weights(df: pd.DataFrame, total_weight: float, cap: float, score_col: str) -> pd.DataFrame:
     if df.empty or total_weight <= 0:
         return df.assign(target_weight=0.0)
@@ -41,7 +40,6 @@ def _normalize_weights(df: pd.DataFrame, total_weight: float, cap: float, score_
     return x
 
 
-
 def _alpha_weight_from_conviction(conviction: float, cfg: AllocationConfig) -> float:
     if conviction <= 0:
         return 0.0
@@ -54,26 +52,45 @@ def _alpha_weight_from_conviction(conviction: float, cfg: AllocationConfig) -> f
     return cfg.alpha_weight_max
 
 
+def _gate_alpha(candidates: pd.DataFrame, cfg: AllocationConfig) -> tuple[bool, str, float, float, pd.DataFrame]:
+    alpha = candidates.copy()
 
-def _gate_alpha(candidates: pd.DataFrame, cfg: AllocationConfig) -> tuple[bool, str, float, float]:
-    if candidates.empty:
-        return False, "no_alpha_candidates", 0.0, 0.0
-    best = candidates.sort_values(["conviction_score", "expected_net_apy"], ascending=False).iloc[0]
-    edge_after_cost = float(best["expected_net_apy"]) - float(best["turnover_cost_bps"]) / 10_000.0
-    if float(best["expected_net_apy"]) <= cfg.expected_net_hurdle:
-        return False, "net_carry_below_hurdle", float(best["conviction_score"]), edge_after_cost
-    if float(best["persistence_score"]) <= cfg.persistence_floor:
-        return False, "persistence_below_floor", float(best["conviction_score"]), edge_after_cost
-    if float(best["exit_quality_score"]) <= cfg.exit_quality_floor:
-        return False, "exit_quality_below_floor", float(best["conviction_score"]), edge_after_cost
-    if bool(best.get("stress_flag", False)):
-        return False, "stress_flag", float(best["conviction_score"]), edge_after_cost
-    if not bool(best.get("policy_pass", False)):
-        return False, "policy_fail", float(best["conviction_score"]), edge_after_cost
+    if alpha.empty:
+        return False, "no_alpha_candidates", 0.0, 0.0, alpha
+
+    alpha = alpha[
+        alpha["policy_pass"].fillna(False)
+        & (~alpha["stress_flag"].fillna(False))
+        & (alpha["expected_net_apy"].fillna(0.0) > 0)
+    ].copy()
+
+    if alpha.empty:
+        return False, "no_alpha_candidates", 0.0, 0.0, alpha
+
+    alpha = alpha.sort_values(
+        ["expected_net_apy", "conviction_score"],
+        ascending=False,
+    )
+
+    top_alpha = alpha.head(3).copy()
+
+    weights = top_alpha["conviction_score"].clip(lower=1e-6)
+    blended_expected_net = float((top_alpha["expected_net_apy"] * weights).sum() / weights.sum())
+    blended_conviction = float((top_alpha["conviction_score"] * weights).sum() / weights.sum())
+
+    turnover_cost = float(top_alpha["turnover_cost_bps"].fillna(0.0).mean()) / 10_000.0
+    edge_after_cost = blended_expected_net - turnover_cost
+
+    if blended_expected_net <= cfg.expected_net_hurdle:
+        return False, "net_carry_below_hurdle", blended_conviction, edge_after_cost, top_alpha
+    if float(top_alpha["persistence_score"].max()) <= cfg.persistence_floor:
+        return False, "persistence_below_floor", blended_conviction, edge_after_cost, top_alpha
+    if float(top_alpha["exit_quality_score"].max()) <= cfg.exit_quality_floor:
+        return False, "exit_quality_below_floor", blended_conviction, edge_after_cost, top_alpha
     if edge_after_cost <= cfg.turnover_edge_buffer:
-        return False, "edge_not_above_cost", float(best["conviction_score"]), edge_after_cost
-    return True, "pass", float(best["conviction_score"]), edge_after_cost
+        return False, "edge_not_above_cost", blended_conviction, edge_after_cost, top_alpha
 
+    return True, "pass", blended_conviction, edge_after_cost, top_alpha
 
 
 def allocate_daily_decisions(features: pd.DataFrame, cfg: AllocationConfig | None = None, firewall_cfg: FirewallConfig | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -90,12 +107,14 @@ def allocate_daily_decisions(features: pd.DataFrame, cfg: AllocationConfig | Non
         base_candidates = day[(day["strategy_type"] == "base_lend") & (day["policy_pass"])]
         alpha_candidates = day[(day["strategy_type"].isin(["spread_alpha", "funding_alpha"])) & (day["policy_pass"])]
 
-        alpha_pass, gate_reason, conviction_score, edge_after_cost = _gate_alpha(alpha_candidates, cfg)
+        alpha_pass, gate_reason, conviction_score, edge_after_cost, selected_alpha = _gate_alpha(alpha_candidates, cfg)
         alpha_weight = _alpha_weight_from_conviction(conviction_score, cfg) if alpha_pass else 0.0
+
         reserve_weight = cfg.reserve_weight_default
         if alpha_pass and day["exit_quality_score"].max() > 0.80:
             reserve_weight = cfg.reserve_weight_min
         reserve_weight = min(max(reserve_weight, cfg.reserve_weight_min), cfg.reserve_weight_max)
+
         base_weight = 1.0 - alpha_weight - reserve_weight
         base_weight = min(max(base_weight, cfg.base_weight_min), cfg.base_weight_max)
         total = base_weight + alpha_weight + reserve_weight
@@ -103,7 +122,12 @@ def allocate_daily_decisions(features: pd.DataFrame, cfg: AllocationConfig | Non
             base_weight += 1.0 - total
 
         base_alloc = _normalize_weights(base_candidates, base_weight, cfg.single_base_cap, "expected_net_apy")
-        alpha_alloc = _normalize_weights(alpha_candidates, alpha_weight, cfg.single_alpha_cap, "conviction_score")
+        alpha_alloc = _normalize_weights(
+            selected_alpha if alpha_pass else alpha_candidates.iloc[0:0],
+            alpha_weight,
+            cfg.single_alpha_cap,
+            "expected_net_apy",
+        )
 
         if not alpha_alloc.empty:
             funding_mask = alpha_alloc["strategy_type"].eq("funding_alpha")
@@ -151,10 +175,10 @@ def allocate_daily_decisions(features: pd.DataFrame, cfg: AllocationConfig | Non
                 "base_weight": base_weight,
                 "alpha_weight": alpha_weight,
                 "reserve_weight": reserve_weight,
-                "expected_net_apy": expected_net_apy,
-                "persistence_score": float(alpha_candidates["persistence_score"].max()) if not alpha_candidates.empty else 0.0,
+                "expected_net_apy": float(edge_after_cost),
+                "persistence_score": float(selected_alpha["persistence_score"].max()) if not selected_alpha.empty else 0.0,
                 "exit_quality_score": float(day["exit_quality_score"].max()) if not day.empty else 0.0,
-                "funding_quality_score": float(alpha_candidates["funding_quality_score"].max()) if not alpha_candidates.empty else 0.0,
+                "funding_quality_score": float(selected_alpha["funding_quality_score"].max()) if not selected_alpha.empty else 0.0,
                 "conviction_score": conviction_score,
                 "edge_after_cost": edge_after_cost,
                 "stress_flags": int(day["stress_flag"].fillna(False).sum()),
