@@ -21,7 +21,7 @@ class OpportunityConfig:
     # Haircuts / adjustments
     base_reserve_drag: float = 0.0
     spread_alpha_haircut: float = 0.01
-    funding_alpha_haircut: float = 0.03
+    funding_alpha_haircut: float = 0.005
 
     # Filters
     min_base_apy: float = 0.0
