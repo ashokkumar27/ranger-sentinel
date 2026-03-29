@@ -74,23 +74,23 @@ def _gate_alpha(candidates: pd.DataFrame, cfg: AllocationConfig) -> tuple[bool, 
 
     top_alpha = alpha.head(3).copy()
 
-    weights = top_alpha["conviction_score"].clip(lower=1e-6)
-    blended_expected_net = float((top_alpha["expected_net_apy"] * weights).sum() / weights.sum())
-    blended_conviction = float((top_alpha["conviction_score"] * weights).sum() / weights.sum())
-
-    turnover_cost = float(top_alpha["turnover_cost_bps"].fillna(0.0).mean()) / 10_000.0
-    edge_after_cost = blended_expected_net - turnover_cost
-
-    if blended_expected_net <= cfg.expected_net_hurdle:
-        return False, "net_carry_below_hurdle", blended_conviction, edge_after_cost, top_alpha
-    if float(top_alpha["persistence_score"].max()) <= cfg.persistence_floor:
+    best = top_alpha.iloc[0]
+    
+    best_expected_net = float(best["expected_net_apy"])
+    best_conviction = float(best["conviction_score"])
+    turnover_cost = float(best.get("turnover_cost_bps", 0.0)) / 10_000.0
+    edge_after_cost = best_expected_net - turnover_cost
+    
+    if best_expected_net <= cfg.expected_net_hurdle:
+        return False, "net_carry_below_hurdle", best_conviction, edge_after_cost, top_alpha
+    if float(best["persistence_score"]) <= cfg.persistence_floor:
         return False, "persistence_below_floor", blended_conviction, edge_after_cost, top_alpha
-    if float(top_alpha["exit_quality_score"].max()) <= cfg.exit_quality_floor:
+    if float(best["exit_quality_score"]) <= cfg.exit_quality_floor:
         return False, "exit_quality_below_floor", blended_conviction, edge_after_cost, top_alpha
     if edge_after_cost <= cfg.turnover_edge_buffer:
         return False, "edge_not_above_cost", blended_conviction, edge_after_cost, top_alpha
 
-    return True, "pass", blended_conviction, edge_after_cost, top_alpha
+    return True, "pass", best_conviction, edge_after_cost, top_alpha
 
 
 def allocate_daily_decisions(features: pd.DataFrame, cfg: AllocationConfig | None = None, firewall_cfg: FirewallConfig | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
