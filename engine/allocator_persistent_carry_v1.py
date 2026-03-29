@@ -17,7 +17,7 @@ class AllocationConfig:
     reserve_weight_min: float = 0.05
     reserve_weight_max: float = 0.10
     reserve_weight_default: float = 0.10
-    expected_net_hurdle: float = 0.115
+    expected_net_hurdle: float = 0.05
     persistence_floor: float = 0.62
     exit_quality_floor: float = 0.55
     turnover_edge_buffer: float = 0.015
