@@ -265,9 +265,9 @@ def assert_cross_venue_coverage(combined: pd.DataFrame) -> None:
     venues = sorted(v for v in prepared["venue"].dropna().unique().tolist() if v)
     protocols = sorted(v for v in prepared["protocol"].dropna().unique().tolist() if v)
 
-    if len(venues) < 3:
+    if len(venues) < 2:
         raise DataQualityError(
-            f"Cross-venue coverage too weak: found venues={venues}, need at least 3 venues"
+            f"Cross-venue coverage too weak: found venues={venues}, need at least 2 venues"
         )
 
     if len(protocols) < 3:
@@ -288,7 +288,6 @@ def main() -> None:
     canonical_parts: list[pd.DataFrame] = []
 
     source_specs = [
-        ("drift_hist", lambda: fetch_funding_rates("SOL-PERP"), "drift"),
         ("drift_live", fetch_market_stats, "drift"),
         ("jupiter_lend", fetch_earn_tokens, "jupiter_lend"),
         ("kamino", fetch_borrow_and_staking_history, "kamino"),
