@@ -15,12 +15,15 @@ def build_daily_feature_table(snapshots: pd.DataFrame) -> pd.DataFrame:
     x["ts"] = pd.to_datetime(x["ts"], utc=True, errors="coerce")
     x = x.dropna(subset=["ts"])
 
-    x["deposit_apy"] = pd.to_numeric(x["deposit_apy"], errors="coerce")
-    x["borrow_apy"] = pd.to_numeric(x["borrow_apy"], errors="coerce")
-    x["funding_rate_daily"] = pd.to_numeric(x["funding_rate_daily"], errors="coerce")
-    x["available_liquidity_usd"] = pd.to_numeric(x["available_liquidity_usd"], errors="coerce")
-    x["utilization"] = pd.to_numeric(x["utilization"], errors="coerce")
-    x["price_usd"] = pd.to_numeric(x["price_usd"], errors="coerce")
+    for c in [
+        "deposit_apy",
+        "borrow_apy",
+        "funding_rate_daily",
+        "available_liquidity_usd",
+        "utilization",
+        "price_usd",
+    ]:
+        x[c] = pd.to_numeric(x[c], errors="coerce")
 
     x["date"] = x["ts"].dt.floor("D")
 
@@ -49,20 +52,30 @@ def build_daily_feature_table(snapshots: pd.DataFrame) -> pd.DataFrame:
 
     pivot["base_return_daily"] = pivot["base_deposit_apy"].apply(apy_to_daily)
 
+    # Use Kamino/base APY momentum as the primary adaptive signal for now
+    pivot["apy_momentum_7d"] = (
+        pivot["base_deposit_apy"]
+        .diff(7)
+        .fillna(0.0)
+    )
+
+    pivot["apy_level_z"] = (
+        pivot["base_deposit_apy"] - pivot["base_deposit_apy"].rolling(30, min_periods=5).mean()
+    ) / (
+        pivot["base_deposit_apy"].rolling(30, min_periods=5).std().replace(0, pd.NA)
+    )
+    pivot["apy_level_z"] = pivot["apy_level_z"].fillna(0.0)
+
     funding_proxy = pivot.get(
         "funding_rate_daily_drift",
         pd.Series(0.0, index=pivot.index),
     ).fillna(0.0)
 
-    yield_spread_proxy = pivot["base_return_daily"].fillna(0.0)
-
-    pivot["carry_return_daily"] = funding_proxy + 0.3 * yield_spread_proxy - 0.00005
-
-    liq_cols = [c for c in pivot.columns if c.startswith("available_liquidity_usd_")]
-    if liq_cols:
-        pivot["liquidity_score"] = pivot[liq_cols].mean(axis=1).rank(pct=True).fillna(0.5)
-    else:
-        pivot["liquidity_score"] = 0.5
+    pivot["carry_return_daily"] = (
+        0.50 * funding_proxy
+        + 0.50 * pivot["base_return_daily"]
+        - 0.00005
+    )
 
     px_col = "price_usd_drift" if "price_usd_drift" in pivot.columns else None
     if px_col:
@@ -78,10 +91,11 @@ def build_daily_feature_table(snapshots: pd.DataFrame) -> pd.DataFrame:
 
     pivot["volatility_score"] = pivot["realized_vol_7d"]
 
+    # Temporary, intentionally simple and time-varying signal
     raw = (
-        0.70 * pivot["carry_return_daily"].fillna(0.0)
-        + 0.20 * pivot["liquidity_score"].fillna(0.0)
-        - 0.10 * pivot["volatility_score"].fillna(0.0)
+        0.55 * pivot["apy_momentum_7d"].fillna(0.0)
+        + 0.35 * pivot["apy_level_z"].fillna(0.0)
+        + 0.10 * pivot["carry_return_daily"].fillna(0.0)
     )
 
     mn, mx = raw.min(), raw.max()
@@ -89,6 +103,9 @@ def build_daily_feature_table(snapshots: pd.DataFrame) -> pd.DataFrame:
         pivot["carry_quality_score"] = 0.5
     else:
         pivot["carry_quality_score"] = (raw - mn) / (mx - mn)
+
+    # Keep these for compatibility with the rest of the pipeline
+    pivot["liquidity_score"] = 0.5
 
     pivot = pivot.rename(columns={"date": "ts"})
     return pivot
