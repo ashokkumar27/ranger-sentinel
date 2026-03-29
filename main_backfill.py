@@ -5,6 +5,7 @@ from pipelines.normalize import canonicalize
 from storage.db import init_db, SessionLocal
 from storage.schemas import ProtocolSnapshot
 import pandas as pd
+import datetime as dt
 
 PRIMARY_KEY_COLS = ["ts", "protocol", "market", "asset"]
 
@@ -45,9 +46,11 @@ def write_rows(df: pd.DataFrame):
 
     session = SessionLocal()
     try:
-        for row in cleaned.to_dict(orient="records"):
+        for row in df.to_dict(orient="records"):
             if isinstance(row.get("ts"), pd.Timestamp):
                 row["ts"] = row["ts"].to_pydatetime()
+            elif isinstance(row.get("ts"), dt.datetime):
+                row["ts"] = row["ts"]
             session.merge(ProtocolSnapshot(**row))
         session.commit()
     finally:
