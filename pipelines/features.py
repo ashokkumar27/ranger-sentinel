@@ -79,9 +79,9 @@ def build_daily_feature_table(snapshots: pd.DataFrame) -> pd.DataFrame:
     pivot["volatility_score"] = pivot["realized_vol_7d"]
 
     raw = (
-        0.50 * pivot["carry_return_daily"].fillna(0.0)
-        + 0.35 * pivot["liquidity_score"].fillna(0.0)
-        - 0.15 * pivot["volatility_score"].fillna(0.0)
+        0.70 * pivot["carry_return_daily"].fillna(0.0)
+        + 0.20 * pivot["liquidity_score"].fillna(0.0)
+        - 0.10 * pivot["volatility_score"].fillna(0.0)
     )
 
     mn, mx = raw.min(), raw.max()
