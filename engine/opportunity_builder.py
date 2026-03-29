@@ -75,11 +75,16 @@ def build_opportunity_table(snapshots: pd.DataFrame, cfg: OpportunityConfig | No
 
     x["effective_earn_apy"] = x.apply(_effective_base_apy, axis=1)
     x["strategy_type"] = "base_lend"
-    x.loc[x["funding_rate_daily"].notna() & (x["funding_rate_daily"].abs() > 0), "strategy_type"] = "funding_alpha"
-    x.loc[
-        x["deposit_apy"].notna() & x["borrow_apy"].notna() & (x["deposit_apy"] > x["borrow_apy"]),
-        "strategy_type",
-    ] = "spread_alpha"
+    
+    spread_mask = (
+        x["deposit_apy"].notna()
+        & x["borrow_apy"].notna()
+        & (x["deposit_apy"] > x["borrow_apy"])
+    )
+    funding_mask = x["funding_rate_daily"].notna() & (x["funding_rate_daily"].abs() > 0)
+    
+    x.loc[spread_mask, "strategy_type"] = "spread_alpha"
+    x.loc[funding_mask, "strategy_type"] = "funding_alpha"
 
     x["supply_apy"] = x["deposit_apy"]
     x["turnover_cost_bps"] = cfg.default_turnover_cost_bps
