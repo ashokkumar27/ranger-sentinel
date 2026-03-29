@@ -6,6 +6,7 @@ from storage.db import SessionLocal, init_db
 from storage.schemas import ProtocolSnapshot
 from sqlalchemy.dialects.sqlite import insert
 import pandas as pd
+import datetime as dt
 
 PRIMARY_KEY_COLS = ["ts", "protocol", "market", "asset"]
 
