@@ -12,7 +12,16 @@ def main():
     init_db()
     snapshots = load_snapshots()
     feat = build_daily_feature_table(snapshots)
-
+    print("\n=== Feature sample ===")
+    print(feat[["ts", "carry_quality_score", "carry_return_daily", "base_deposit_apy", "liquidity_score", "volatility_score"]].tail(20))
+    
+    print("\n=== carry_quality_score describe ===")
+    print(feat["carry_quality_score"].describe())
+    
+    print("\n=== regime counts ===")
+    print("risk_on   :", (feat["carry_quality_score"] >= 0.52).sum())
+    print("defensive :", (feat["carry_quality_score"] <= 0.48).sum())
+    print("neutral   :", ((feat["carry_quality_score"] > 0.48) & (feat["carry_quality_score"] < 0.52)).sum())
     adaptive = run_daily_replay(feat, policy_version="adaptive_v1")
     static = run_static_baseline(feat, policy_version="static_70_20_10")
 
