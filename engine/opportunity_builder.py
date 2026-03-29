@@ -214,7 +214,9 @@ def _expected_spread_net(supply_apy: float, borrow_apy: float, cfg: OpportunityC
 def _expected_funding_net(funding_rate_daily: float, cfg: OpportunityConfig) -> float:
     # Current data path behaves like an annualized-ish funding input in your feature model.
     # Keep it simple and conservative.
-    return abs(float(funding_rate_daily)) - cfg.funding_alpha_haircut - (cfg.annual_turnover_cost_bps / 10_000.0)
+    haircut = cfg.funding_alpha_haircut
+    turnover = cfg.annual_turnover_cost_bps / 10_000.0
+    return abs(float(funding_rate_daily)) - haircut - turnover
 
 
 def _make_opportunity_row(
