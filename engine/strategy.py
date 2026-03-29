@@ -7,12 +7,12 @@ class PolicyConfig:
     carry_weight_neutral: float = 0.20
     reserve_weight_neutral: float = 0.10
 
-    max_carry_weight: float = 0.35
+    max_carry_weight: float = 0.40
     min_reserve_weight: float = 0.10
-    rebalance_threshold_bps: float = 50.0
+    rebalance_threshold_bps: float = 10.0
 
-    risk_on_score: float = 0.58
-    defensive_score: float = 0.42
+    risk_on_score: float = 0.52
+    defensive_score: float = 0.48
 
 
 def normalize(base_yield: float, carry: float, reserve: float):
@@ -29,9 +29,9 @@ def target_weights(signal: dict, cfg: PolicyConfig | None = None):
     score = float(signal["carry_quality_score"])
 
     if score >= cfg.risk_on_score:
-        weights = normalize(0.55, min(cfg.max_carry_weight, 0.35), 0.10)
+        weights = normalize(0.50, min(cfg.max_carry_weight, 0.40), 0.10)
     elif score <= cfg.defensive_score:
-        weights = normalize(0.85, 0.05, 0.10)
+        weights = normalize(0.90, 0.00, 0.10)
     else:
         weights = normalize(
             cfg.base_weight_neutral,
