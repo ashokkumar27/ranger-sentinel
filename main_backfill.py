@@ -5,6 +5,36 @@ from pipelines.normalize import canonicalize
 from storage.db import init_db, SessionLocal
 from storage.schemas import ProtocolSnapshot
 import pandas as pd
+import datetime as dt
+
+PRIMARY_KEY_COLS = ["ts", "protocol", "market", "asset"]
+
+
+def _fill_missing_key_parts(x: pd.DataFrame) -> pd.DataFrame:
+    x = x.copy()
+    for i, row in x.iterrows():
+        raw = row.get("raw_json") if isinstance(row.get("raw_json"), dict) else {}
+
+        if pd.isna(row.get("market")) or row.get("market") in ("", None):
+            inferred_market = raw.get("symbol") or raw.get("market") or row.get("venue") or "unknown_market"
+            x.at[i, "market"] = f"{inferred_market}:{i}"
+
+        if pd.isna(row.get("asset")) or row.get("asset") in ("", None):
+            inferred_asset = raw.get("asset") or raw.get("token") or raw.get("reserve") or "unknown_asset"
+            x.at[i, "asset"] = inferred_asset
+
+    return x
+
+
+def _prepare_rows(df: pd.DataFrame) -> pd.DataFrame:
+    x = df.copy()
+    if "ts" in x.columns:
+        x["ts"] = pd.to_datetime(x["ts"], utc=True, errors="coerce")
+    x = x.dropna(subset=["ts", "protocol"])
+    x = _fill_missing_key_parts(x)
+    x = x.drop_duplicates(subset=PRIMARY_KEY_COLS, keep="last")
+    return x
+
 
 PRIMARY_KEY_COLS = ["ts", "protocol", "market", "asset"]
 
@@ -37,23 +67,23 @@ def _prepare_rows(df: pd.DataFrame) -> pd.DataFrame:
 
 def write_rows(df: pd.DataFrame) -> int:
     if df.empty:
-        return 0
+        return
 
     cleaned = _prepare_rows(df)
     if cleaned.empty:
-        return 0
+        return
 
     session = SessionLocal()
     try:
-        for row in cleaned.to_dict(orient="records"):
+        for row in df.to_dict(orient="records"):
             if isinstance(row.get("ts"), pd.Timestamp):
                 row["ts"] = row["ts"].to_pydatetime()
+            elif isinstance(row.get("ts"), dt.datetime):
+                row["ts"] = row["ts"]
             session.merge(ProtocolSnapshot(**row))
         session.commit()
     finally:
         session.close()
-
-    return len(cleaned)
 
 
 def main():
@@ -88,8 +118,12 @@ def main():
     except Exception as e:
         print(f"[warn] kamino history fetch failed: {e}")
 
-    if written:
-        print(f"Wrote {written} rows")
+    non_empty_frames = [f for f in frames if not f.empty and not f.dropna(how="all").empty]
+
+    if non_empty_frames:
+        all_df = pd.concat(non_empty_frames, ignore_index=True)
+        write_rows(all_df)
+        print(f"Wrote {len(all_df)} rows")
     else:
         print("No rows fetched. Check your API key and selected market/reserve IDs.")
 
