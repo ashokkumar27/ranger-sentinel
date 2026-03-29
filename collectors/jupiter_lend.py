@@ -62,31 +62,31 @@ def fetch_earn_tokens() -> pd.DataFrame:
         # - rewardsRate = extra incentive yield
         # - totalRate = total yield
         # We store totalRate as deposit_apy because that is the economically relevant earn yield.
-    def _safe_rate_1e4(value):
-        num = _safe_num(value)
-        if num is None:
-            return None
-        return num / 1e4
-    
-    
-    total_rate = _safe_rate_1e4(_pick_first(item, "totalRate"))
-    supply_rate = _safe_rate_1e4(_pick_first(item, "supplyRate"))
-    rewards_rate = _safe_rate_1e4(_pick_first(item, "rewardsRate"))
-    
-    fallback_rate = _safe_num(
-        _pick_first(item, "apy", "supplyApy")
-    )
-    
-    # Priority: totalRate → fallback → derived
-    deposit_apy = total_rate
-    if deposit_apy is None:
-        deposit_apy = fallback_rate
-    if deposit_apy is None and supply_rate is not None and rewards_rate is not None:
-        deposit_apy = supply_rate + rewards_rate
-    if deposit_apy is None:
-        deposit_apy = supply_rate
-    
-    base_supply_apy = supply_rate
+        def _safe_rate_1e4(value):
+            num = _safe_num(value)
+            if num is None:
+                return None
+            return num / 1e4
+        
+        
+        total_rate = _safe_rate_1e4(_pick_first(item, "totalRate"))
+        supply_rate = _safe_rate_1e4(_pick_first(item, "supplyRate"))
+        rewards_rate = _safe_rate_1e4(_pick_first(item, "rewardsRate"))
+        
+        fallback_rate = _safe_num(
+            _pick_first(item, "apy", "supplyApy")
+        )
+        
+        # Priority: totalRate → fallback → derived
+        deposit_apy = total_rate
+        if deposit_apy is None:
+            deposit_apy = fallback_rate
+        if deposit_apy is None and supply_rate is not None and rewards_rate is not None:
+            deposit_apy = supply_rate + rewards_rate
+        if deposit_apy is None:
+            deposit_apy = supply_rate
+        
+        base_supply_apy = supply_rate
 
         # Try several liquidity candidates. Current docs mention totalAssets and liquiditySupplyData.
         available_liquidity_usd = None
