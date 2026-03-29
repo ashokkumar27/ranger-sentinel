@@ -2,7 +2,7 @@ from collectors.drift import fetch_funding_rates, fetch_market_stats
 from collectors.jupiter_lend import fetch_earn_tokens
 from collectors.kamino import fetch_borrow_and_staking_history
 from pipelines.normalize import canonicalize
-from storage.db import init_db, SessionLocal
+from storage.db import SessionLocal, init_db
 from storage.schemas import ProtocolSnapshot
 from sqlalchemy.dialects.sqlite import insert
 import pandas as pd
@@ -11,30 +11,32 @@ import datetime as dt
 PRIMARY_KEY_COLS = ["ts", "protocol", "market", "asset"]
 
 
-def _fill_missing_key_parts(x: pd.DataFrame) -> pd.DataFrame:
-    x = x.copy()
-    for i, row in x.iterrows():
+def _fill_missing_key_parts(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    for idx, row in out.iterrows():
         raw = row.get("raw_json") if isinstance(row.get("raw_json"), dict) else {}
 
-        if pd.isna(row.get("market")) or row.get("market") in ("", None):
+        market = row.get("market")
+        if pd.isna(market) or market in ("", None):
             inferred_market = raw.get("symbol") or raw.get("market") or row.get("venue") or "unknown_market"
-            x.at[i, "market"] = f"{inferred_market}:{i}"
+            out.at[idx, "market"] = f"{inferred_market}:{idx}"
 
-        if pd.isna(row.get("asset")) or row.get("asset") in ("", None):
+        asset = row.get("asset")
+        if pd.isna(asset) or asset in ("", None):
             inferred_asset = raw.get("asset") or raw.get("token") or raw.get("reserve") or "unknown_asset"
-            x.at[i, "asset"] = inferred_asset
+            out.at[idx, "asset"] = inferred_asset
 
-    return x
+    return out
 
 
 def _prepare_rows(df: pd.DataFrame) -> pd.DataFrame:
-    x = df.copy()
-    if "ts" in x.columns:
-        x["ts"] = pd.to_datetime(x["ts"], utc=True, errors="coerce")
-    x = x.dropna(subset=["ts", "protocol"])
-    x = _fill_missing_key_parts(x)
-    x = x.drop_duplicates(subset=PRIMARY_KEY_COLS, keep="last")
-    return x
+    out = df.copy()
+    if "ts" in out.columns:
+        out["ts"] = pd.to_datetime(out["ts"], utc=True, errors="coerce")
+    out = out.dropna(subset=["ts", "protocol"])
+    out = _fill_missing_key_parts(out)
+    out = out.drop_duplicates(subset=PRIMARY_KEY_COLS, keep="last")
+    return out
 
 
 def write_rows(df: pd.DataFrame) -> int:
@@ -53,61 +55,13 @@ def write_rows(df: pd.DataFrame) -> int:
     session = SessionLocal()
     try:
         stmt = insert(ProtocolSnapshot).values(rows)
-        updatable_columns = {
+        update_cols = {
             c.name: getattr(stmt.excluded, c.name)
             for c in ProtocolSnapshot.__table__.columns
             if c.name not in PRIMARY_KEY_COLS
         }
-        stmt = stmt.on_conflict_do_update(
-            index_elements=PRIMARY_KEY_COLS,
-            set_=updatable_columns,
-        )
+        stmt = stmt.on_conflict_do_update(index_elements=PRIMARY_KEY_COLS, set_=update_cols)
         session.execute(stmt)
-PRIMARY_KEY_COLS = ["ts", "protocol", "market", "asset"]
-
-
-def _fill_missing_key_parts(x: pd.DataFrame) -> pd.DataFrame:
-    x = x.copy()
-    for i, row in x.iterrows():
-        raw = row.get("raw_json") if isinstance(row.get("raw_json"), dict) else {}
-
-        if pd.isna(row.get("market")) or row.get("market") in ("", None):
-            inferred_market = raw.get("symbol") or raw.get("market") or row.get("venue") or "unknown_market"
-            x.at[i, "market"] = f"{inferred_market}:{i}"
-
-        if pd.isna(row.get("asset")) or row.get("asset") in ("", None):
-            inferred_asset = raw.get("asset") or raw.get("token") or raw.get("reserve") or "unknown_asset"
-            x.at[i, "asset"] = inferred_asset
-
-    return x
-
-
-def _prepare_rows(df: pd.DataFrame) -> pd.DataFrame:
-    x = df.copy()
-    if "ts" in x.columns:
-        x["ts"] = pd.to_datetime(x["ts"], utc=True, errors="coerce")
-    x = x.dropna(subset=["ts", "protocol"])
-    x = _fill_missing_key_parts(x)
-    x = x.drop_duplicates(subset=PRIMARY_KEY_COLS, keep="last")
-    return x
-
-
-def write_rows(df: pd.DataFrame) -> int:
-    if df.empty:
-        return
-
-    cleaned = _prepare_rows(df)
-    if cleaned.empty:
-        return
-
-    session = SessionLocal()
-    try:
-        for row in df.to_dict(orient="records"):
-            if isinstance(row.get("ts"), pd.Timestamp):
-                row["ts"] = row["ts"].to_pydatetime()
-            elif isinstance(row.get("ts"), dt.datetime):
-                row["ts"] = row["ts"]
-            session.merge(ProtocolSnapshot(**row))
         session.commit()
     finally:
         session.close()
@@ -115,7 +69,7 @@ def write_rows(df: pd.DataFrame) -> int:
     return len(rows)
 
 
-def main():
+def main() -> None:
     init_db()
     written = 0
 
@@ -149,12 +103,6 @@ def main():
 
     if written:
         print(f"Wrote {written} rows")
-    non_empty_frames = [f for f in frames if not f.empty and not f.dropna(how="all").empty]
-
-    if non_empty_frames:
-        all_df = pd.concat(non_empty_frames, ignore_index=True)
-        write_rows(all_df)
-        print(f"Wrote {len(all_df)} rows")
     else:
         print("No rows fetched. Check your API key and selected market/reserve IDs.")
 
