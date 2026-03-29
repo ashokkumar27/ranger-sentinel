@@ -16,6 +16,8 @@ def run_daily_replay(signals_df: pd.DataFrame, initial_nav: float = 100_000.0, p
         }
         target = target_weights(signal)
         rebalance = should_rebalance(current, target)
+        if len(rows) < 10:
+            print("DEBUG", row["ts"], signal["carry_quality_score"], current, target, rebalance)
 
         rebalance_cost = 0.0
         if rebalance:
